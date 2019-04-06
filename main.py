@@ -33,15 +33,14 @@ def main():
     model = TSN(num_class, args.num_segments, args.modality,
                 base_model=args.arch,
                 consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn)
-
     crop_size = model.crop_size
     scale_size = model.scale_size
-    input_mean = model.input_mean
-    input_std = model.input_std
+    # input_mean = model.input_mean
+    # input_std = model.input_std
     policies = model.get_optim_policies()
     train_augmentation = model.get_augmentation()
 
-    model = torch.nn.DataParallel(model, device_ids=args.gpus).cuda()
+    # model = torch.nn.DataParallel(model, device_ids=args.gpus).cuda()
 
     if args.resume:
         if os.path.isfile(args.resume):
@@ -55,87 +54,87 @@ def main():
         else:
             print(("=> no checkpoint found at '{}'".format(args.resume)))
 
-    cudnn.benchmark = True
-
+    # cudnn.benchmark = True
+    #
     # Data loading code
-    if args.modality != 'RGBDiff':
-        normalize = GroupNormalize(input_mean, input_std)
-    else:
-        normalize = IdentityTransform()
+    # if args.modality != 'RGBDiff':
+    #     normalize = GroupNormalize(input_mean, input_std)
+    # else:
+    #     normalize = IdentityTransform()
 
     if args.modality == 'RGB':
         data_length = 1
     elif args.modality in ['Flow', 'RGBDiff']:
         data_length = 5
 
-    train_loader = torch.utils.data.DataLoader(
-        TSNDataSet("", args.train_list, num_segments=args.num_segments,
-                   new_length=data_length,
-                   modality=args.modality,
-                   image_tmpl="img_{:05d}.jpg" if args.modality in ["RGB", "RGBDiff"] else args.flow_prefix+"{}_{:05d}.jpg",
-                   transform=torchvision.transforms.Compose([
-                       train_augmentation,
-                       Stack(roll=args.arch == 'BNInception'),
-                       ToTorchFormatTensor(div=args.arch != 'BNInception'),
-                       normalize,
-                   ])),
-        batch_size=args.batch_size, shuffle=True,
-        num_workers=args.workers, pin_memory=True)
-
-    val_loader = torch.utils.data.DataLoader(
-        TSNDataSet("", args.val_list, num_segments=args.num_segments,
-                   new_length=data_length,
-                   modality=args.modality,
-                   image_tmpl="img_{:05d}.jpg" if args.modality in ["RGB", "RGBDiff"] else args.flow_prefix+"{}_{:05d}.jpg",
-                   random_shift=False,
-                   transform=torchvision.transforms.Compose([
-                       GroupScale(int(scale_size)),
-                       GroupCenterCrop(crop_size),
-                       Stack(roll=args.arch == 'BNInception'),
-                       ToTorchFormatTensor(div=args.arch != 'BNInception'),
-                       normalize,
-                   ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
-    # define loss function (criterion) and optimizer
-    if args.loss_type == 'nll':
-        criterion = torch.nn.CrossEntropyLoss().cuda()
-    else:
-        raise ValueError("Unknown loss type")
-
-    for group in policies:
-        print(('group: {} has {} params, lr_mult: {}, decay_mult: {}'.format(
-            group['name'], len(group['params']), group['lr_mult'], group['decay_mult'])))
-
-    optimizer = torch.optim.SGD(policies,
-                                args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
-
-    if args.evaluate:
-        validate(val_loader, model, criterion, 0)
-        return
-
-    for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args.lr_steps)
-
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
-
-        # evaluate on validation set
-        if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
-            prec1 = validate(val_loader, model, criterion, (epoch + 1) * len(train_loader))
-
-            # remember best prec@1 and save checkpoint
-            is_best = prec1 > best_prec1
-            best_prec1 = max(prec1, best_prec1)
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            }, is_best)
+    # train_loader = torch.utils.data.DataLoader(
+    #     TSNDataSet("", args.train_list, num_segments=args.num_segments,
+    #                new_length=data_length,
+    #                modality=args.modality,
+    #                image_tmpl="img_{:05d}.jpg" if args.modality in ["RGB", "RGBDiff"] else args.flow_prefix+"{}_{:05d}.jpg",
+    #                transform=torchvision.transforms.Compose([
+    #                    train_augmentation,
+    #                    Stack(roll=args.arch == 'BNInception'),
+    #                    ToTorchFormatTensor(div=args.arch != 'BNInception'),
+    #                    normalize,
+    #                ])),
+    #     batch_size=args.batch_size, shuffle=True,
+    #     num_workers=args.workers, pin_memory=True)
+    #
+    # val_loader = torch.utils.data.DataLoader(
+    #     TSNDataSet("", args.val_list, num_segments=args.num_segments,
+    #                new_length=data_length,
+    #                modality=args.modality,
+    #                image_tmpl="img_{:05d}.jpg" if args.modality in ["RGB", "RGBDiff"] else args.flow_prefix+"{}_{:05d}.jpg",
+    #                random_shift=False,
+    #                transform=torchvision.transforms.Compose([
+    #                    GroupScale(int(scale_size)),
+    #                    GroupCenterCrop(crop_size),
+    #                    Stack(roll=args.arch == 'BNInception'),
+    #                    ToTorchFormatTensor(div=args.arch != 'BNInception'),
+    #                    normalize,
+    #                ])),
+    #     batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True)
+    #
+    # # define loss function (criterion) and optimizer
+    # if args.loss_type == 'nll':
+    #     criterion = torch.nn.CrossEntropyLoss().cuda()
+    # else:
+    #     raise ValueError("Unknown loss type")
+    #
+    # for group in policies:
+    #     print(('group: {} has {} params, lr_mult: {}, decay_mult: {}'.format(
+    #         group['name'], len(group['params']), group['lr_mult'], group['decay_mult'])))
+    #
+    # optimizer = torch.optim.SGD(policies,
+    #                             args.lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
+    #
+    # if args.evaluate:
+    #     validate(val_loader, model, criterion, 0)
+    #     return
+    #
+    # for epoch in range(args.start_epoch, args.epochs):
+    #     adjust_learning_rate(optimizer, epoch, args.lr_steps)
+    #
+    #     # train for one epoch
+    #     train(train_loader, model, criterion, optimizer, epoch)
+    #
+    #     # evaluate on validation set
+    #     if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
+    #         prec1 = validate(val_loader, model, criterion, (epoch + 1) * len(train_loader))
+    #
+    #         # remember best prec@1 and save checkpoint
+    #         is_best = prec1 > best_prec1
+    #         best_prec1 = max(prec1, best_prec1)
+    #         save_checkpoint({
+    #             'epoch': epoch + 1,
+    #             'arch': args.arch,
+    #             'state_dict': model.state_dict(),
+    #             'best_prec1': best_prec1,
+    #         }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch):

@@ -36,9 +36,11 @@ TSN Configurations:
     dropout_ratio:      {}
         """.format(base_model, self.modality, self.num_segments, self.new_length, consensus_type, self.dropout)))
 
-        self._prepare_base_model(base_model)
+        self._prepare_base_model(base_model,num_class)
 
-        feature_dim = self._prepare_tsn(num_class)
+        # prepare tsn add last layer of classification - however inceptioi3d has its during base model creation
+        if (base_model != 'InceptionI3d') :
+            feature_dim = self._prepare_tsn(num_class)
 
         if self.modality == 'Flow':
             print("Converting the ImageNet model to a flow init model")
@@ -76,7 +78,7 @@ TSN Configurations:
             constant(self.new_fc.bias, 0)
         return feature_dim
 
-    def _prepare_base_model(self, base_model):
+    def _prepare_base_model(self, base_model,num_class):
 
         if 'resnet' in base_model or 'vgg' in base_model:
             self.base_model = getattr(torchvision.models, base_model)(True)
@@ -111,6 +113,20 @@ TSN Configurations:
             self.input_size = 299
             self.input_mean = [0.5]
             self.input_std = [0.5]
+
+        elif 'InceptionI3d' in base_model:
+            import tf_model_zoo
+            self.input_size = 224
+            if self.modality == 'flow':
+                i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=2)
+                i3d.load_state_dict(torch.load('InceptionI3D/flow_imagenet.pt'))
+                self.base_model = i3d
+            else:
+                i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=3)
+                i3d.load_state_dict(torch.load('InceptionI3D/rgb_imagenet.pt'))
+                self.base_model = i3d
+                self.base_model.last_layer_name = self.base_model._final_endpoint
+            self.base_model.replace_logits(157)
         else:
             raise ValueError('Unknown base model: {}'.format(base_model))
 
@@ -146,7 +162,7 @@ TSN Configurations:
         conv_cnt = 0
         bn_cnt = 0
         for m in self.modules():
-            if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.Conv1d):
+            if isinstance(m, torch.nn.Conv3d) or isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.Conv1d):
                 ps = list(m.parameters())
                 conv_cnt += 1
                 if conv_cnt == 1:
@@ -162,10 +178,10 @@ TSN Configurations:
                 normal_weight.append(ps[0])
                 if len(ps) == 2:
                     normal_bias.append(ps[1])
-                  
+
             elif isinstance(m, torch.nn.BatchNorm1d):
                 bn.extend(list(m.parameters()))
-            elif isinstance(m, torch.nn.BatchNorm2d):
+            elif isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm3d):
                 bn_cnt += 1
                 # later BN's are frozen
                 if not self._enable_pbn or bn_cnt == 1:
