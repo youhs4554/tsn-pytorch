@@ -274,7 +274,8 @@ class ToTorchFormatTensor(object):
     def __call__(self, pic):
         if isinstance(pic, np.ndarray):
             # handle numpy array
-            img = torch.from_numpy(pic).permute(2, 0, 1).contiguous()
+            pic = pic.reshape([pic.shape[0],pic.shape[1],3,(pic.shape[2]//3)])
+            img = torch.from_numpy(pic).permute(2, 3, 0, 1).contiguous()
         else:
             # handle PIL Image
             img = torch.ByteTensor(torch.ByteStorage.from_buffer(pic.tobytes()))

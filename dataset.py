@@ -1,5 +1,6 @@
 import torch.utils.data as data
-
+import cv2
+import torch
 from PIL import Image
 import os
 import os.path
@@ -108,7 +109,6 @@ class TSNDataSet(data.Dataset):
                 images.extend(seg_imgs)
                 if p < record.num_frames:
                     p += 1
-
         process_data = self.transform(images)
         return process_data, record.label
 

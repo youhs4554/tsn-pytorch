@@ -40,7 +40,7 @@ TSN Configurations:
 
         # prepare tsn add last layer of classification - however inceptioi3d has its during base model creation
         if (base_model != 'InceptionI3d') :
-            feature_dim = self._prepare_tsn(num_class)
+           feature_dim = self._prepare_tsn(num_class, base_model)
 
         if self.modality == 'Flow':
             print("Converting the ImageNet model to a flow init model")
@@ -60,22 +60,35 @@ TSN Configurations:
         if partial_bn:
             self.partialBN(True)
 
-    def _prepare_tsn(self, num_class):
+    def _prepare_tsn(self, num_class, base_model):
         feature_dim = getattr(self.base_model, self.base_model.last_layer_name).in_features
-        if self.dropout == 0:
-            setattr(self.base_model, self.base_model.last_layer_name, nn.Linear(feature_dim, num_class))
-            self.new_fc = None
+        if base_model == "InceptionI3d":
+            self.avg_pool = nn.AvgPool3d(kernel_size=[2, 7, 7], stride=(1, 1, 1))
+            self.dropout = nn.Dropout(self.dropout)
+            import tf_model_zoo
+            self.logits = tf_model_zoo.Unit3D(in_channels=384+384+128+128, output_channels=num_class,
+                             kernel_shape=[1, 1, 1],
+                             padding=0,
+                             activation_fn=None,
+                             use_batch_norm=False,
+                             use_bias=True,
+                             name='logits')
         else:
-            setattr(self.base_model, self.base_model.last_layer_name, nn.Dropout(p=self.dropout))
-            self.new_fc = nn.Linear(feature_dim, num_class)
+            if self.dropout == 0:
+                setattr(self.base_model, self.base_model.last_layer_name, nn.Linear(feature_dim, num_class))
+                self.new_fc = None
+            else:
+                setattr(self.base_model, self.base_model.last_layer_name, nn.Dropout(p=self.dropout))
+                self.new_fc = nn.Linear(feature_dim, num_class)
 
-        std = 0.001
-        if self.new_fc is None:
-            normal(getattr(self.base_model, self.base_model.last_layer_name).weight, 0, std)
-            constant(getattr(self.base_model, self.base_model.last_layer_name).bias, 0)
-        else:
-            normal(self.new_fc.weight, 0, std)
-            constant(self.new_fc.bias, 0)
+            std = 0.001
+            
+            if self.new_fc is None:
+                normal(getattr(self.base_model, self.base_model.last_layer_name).weight, 0, std)
+                constant(getattr(self.base_model, self.base_model.last_layer_name).bias, 0)
+            else:
+                normal(self.new_fc.weight, 0, std)
+                constant(self.new_fc.bias, 0)
         return feature_dim
 
     def _prepare_base_model(self, base_model,num_class):
@@ -118,15 +131,16 @@ TSN Configurations:
             import tf_model_zoo
             self.input_size = 224
             if self.modality == 'flow':
-                i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=2)
+                i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=2, final_endpoint='Mixed_5c')
                 i3d.load_state_dict(torch.load('InceptionI3D/flow_imagenet.pt'))
                 self.base_model = i3d
+                self.base_model.last_layer_name = self.base_model._final_endpoint
             else:
-                i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=3)
+                i3d = tf_model_zoo.InceptionI3d(400, in_channels=3, final_endpoint="Logits")
                 i3d.load_state_dict(torch.load('InceptionI3D/rgb_imagenet.pt'))
                 self.base_model = i3d
                 self.base_model.last_layer_name = self.base_model._final_endpoint
-            self.base_model.replace_logits(157)
+                self.base_model.replace_logits(num_class)
         else:
             raise ValueError('Unknown base model: {}'.format(base_model))
 
@@ -210,7 +224,13 @@ TSN Configurations:
             sample_len = 3 * self.new_length
             input = self._get_diff(input)
 
-        base_out = self.base_model(input.view((-1, sample_len) + input.size()[-2:]))
+        # commented for inceptioni3d
+        # base_out = self.base_model(input.view((-1, sample_len) + input.size()[-2:]))
+        base_out = self.base_model(input)
+        #print("Before upsample: ",base_out.size())
+        import torch.nn.functional as F
+        base_out = F.upsample(base_out,self.new_length * self.num_segments, mode='linear')
+        #print("After upsample: ",base_out.size())
 
         if self.dropout > 0:
             base_out = self.new_fc(base_out)
@@ -218,9 +238,13 @@ TSN Configurations:
         if not self.before_softmax:
             base_out = self.softmax(base_out)
         if self.reshape:
-            base_out = base_out.view((-1, self.num_segments) + base_out.size()[1:])
-
+            base_out = base_out.view((-1, self.num_segments * self.new_length) + (base_out.size()[1],))
+            #base_out = base_out.view((-1, self.num_segments) + base_out.size()[1])
+        #print("Before consensus: ", base_out.shape)
         output = self.consensus(base_out)
+        #print("Output after consensus: ", output.shape)
+        #output = output.reshape((output.shape[1],output.shape[0], output.shape[2]))
+        #print("new output shape: ", output.shape)
         return output.squeeze(1)
 
     def _get_diff(self, input, keep_rgb=False):
