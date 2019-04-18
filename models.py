@@ -130,6 +130,8 @@ TSN Configurations:
         elif 'InceptionI3d' in base_model:
             import tf_model_zoo
             self.input_size = 224
+            self.input_mean = [0.5]
+            self.input_std = [0.5]
             if self.modality == 'flow':
                 i3d = tf_model_zoo.InceptionI3d(num_class, in_channels=2, final_endpoint='Mixed_5c')
                 i3d.load_state_dict(torch.load('InceptionI3D/flow_imagenet.pt'))
@@ -219,7 +221,8 @@ TSN Configurations:
 
     def forward(self, input):
         sample_len = (3 if self.modality == "RGB" else 2) * self.new_length
-
+        #print("Sample len is: ", sample_len)
+        #print("New len is: ", self.new_length)
         if self.modality == 'RGBDiff':
             sample_len = 3 * self.new_length
             input = self._get_diff(input)
@@ -229,7 +232,7 @@ TSN Configurations:
         base_out = self.base_model(input)
         #print("Before upsample: ",base_out.size())
         import torch.nn.functional as F
-        base_out = F.upsample(base_out,self.new_length * self.num_segments, mode='linear')
+        base_out = F.upsample(base_out,self.num_segments, mode='linear')
         #print("After upsample: ",base_out.size())
 
         if self.dropout > 0:
@@ -238,7 +241,7 @@ TSN Configurations:
         if not self.before_softmax:
             base_out = self.softmax(base_out)
         if self.reshape:
-            base_out = base_out.view((-1, self.num_segments * self.new_length) + (base_out.size()[1],))
+            base_out = base_out.view((-1, self.num_segments) + (base_out.size()[1],))
             #base_out = base_out.view((-1, self.num_segments) + base_out.size()[1])
         #print("Before consensus: ", base_out.shape)
         output = self.consensus(base_out)

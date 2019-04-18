@@ -8,15 +8,18 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 from torch.nn.utils import clip_grad_norm
+from tensorboardX import SummaryWriter
 from dataset import TSNDataSet
 from models import TSN
 from transforms import *
 from opts import parser
 
 best_prec1 = 0
+writer = SummaryWriter()
+iteration = 0
 
 def main():
-    global args, best_prec1
+    global args, best_prec1,iteration,writer
     args = parser.parse_args()
 
     if args.dataset == 'ucf101':
@@ -34,6 +37,7 @@ def main():
         data_length = 8
     elif args.modality in ['Flow', 'RGBDiff']:
         data_length = 5
+#    writer.add_scalars('metaInformation',{'Dataset':args.dataset,'modality': args.modality,'dataLength':data_length})
     
     model = TSN(num_class, args.num_segments, args.modality,new_length=data_length, base_model=args.arch, consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn)
     crop_size = model.crop_size
@@ -45,12 +49,16 @@ def main():
     
     model = torch.nn.DataParallel(model, device_ids=args.gpus).cuda()
     
+    if args.arch == 'InceptionI3d':
+        writer.add_graph(model,torch.zeros(1,3,64,224,224))
+        print("aaded graph")
     
     if args.resume:
         if os.path.isfile(args.resume):
             print(("=> loading checkpoint '{}'".format(args.resume)))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
+            iteration = checkpoint['iteration'] 
             best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
             print(("=> loaded checkpoint '{}' (epoch {})"
@@ -135,7 +143,9 @@ def main():
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
+                'iteration' : iteration,
             }, is_best)
+    writer.close() 
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -144,6 +154,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    global writer,iteration
     if args.no_partialbn:
         model.module.partialBN(False)
     else:
@@ -201,12 +212,16 @@ def train(train_loader, model, criterion, optimizer, epoch):
                    epoch, i, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=top1, top5=top5, lr=optimizer.param_groups[-1]['lr'])))
         iteration = iteration + 1
+        writer.add_scalar('trainloss',losses.val,iteration)
+        writer.add_scalar('train_top1',top1.val,iteration)
+        writer.add_scalar('train_top5',top5.val,iteration)
 
 def validate(val_loader, model, criterion, iter, logger=None):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    global writer
     # switch to evaluate mode
     model.eval()
 
@@ -239,6 +254,9 @@ def validate(val_loader, model, criterion, iter, logger=None):
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
                    i, len(val_loader), batch_time=batch_time, loss=losses,
                    top1=top1, top5=top5)))
+        writer.add_scalar('valid_loss',losses.val,i+iter)
+        writer.add_scalar('valid_top1',top1.val,i+iter)
+        writer.add_scalar('valid_top5',top5.val,i+iter)
     print(('Testing Results: Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} Loss {loss.avg:.5f}'
           .format(top1=top1, top5=top5, loss=losses)))
 
@@ -276,9 +294,12 @@ def adjust_learning_rate(optimizer, epoch, lr_steps):
     decay = 0.1 ** (sum(epoch >= np.array(lr_steps)))
     lr = args.lr * decay
     decay = args.weight_decay
+    global writer
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr * param_group['lr_mult']
         param_group['weight_decay'] = decay * param_group['decay_mult']
+    writer.add_scalar('learning_rate',param_group['lr'],epoch)
+    writer.add_scalar('weight_decay',param_group['weight_decay'],epoch)
 
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
