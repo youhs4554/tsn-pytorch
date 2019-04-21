@@ -34,10 +34,12 @@ def main():
         raise ValueError('Unknown dataset '+args.dataset)
    
     if args.modality == 'RGB':
-        data_length = 8
+        if args.arch == "InceptionI3d":
+            data_length = 8
+        else:
+            data_length = 1
     elif args.modality in ['Flow', 'RGBDiff']:
         data_length = 5
-#    writer.add_scalars('metaInformation',{'Dataset':args.dataset,'modality': args.modality,'dataLength':data_length})
     
     model = TSN(num_class, args.num_segments, args.modality,new_length=data_length, base_model=args.arch, consensus_type=args.consensus_type, dropout=args.dropout, partial_bn=not args.no_partialbn)
     crop_size = model.crop_size
@@ -51,8 +53,9 @@ def main():
     
     if args.arch == 'InceptionI3d':
         writer.add_graph(model,torch.zeros(1,3,64,224,224))
-        print("aaded graph")
-    
+    elif args.arch == 'BNInception':
+        writer.add_graph(model,torch.zeros(1,3,224,2244))
+
     if args.resume:
         if os.path.isfile(args.resume):
             print(("=> loading checkpoint '{}'".format(args.resume)))
@@ -67,7 +70,7 @@ def main():
             print(("=> no checkpoint found at '{}'".format(args.resume)))
 
     cudnn.benchmark = True
-    #
+
     # Data loading code
     if args.modality != 'RGBDiff':
         normalize = GroupNormalize(input_mean, input_std)
@@ -88,7 +91,7 @@ def main():
                    ])),
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
-   
+    writer.add_scalar('train_datasize', len(train_loader))   
     val_loader = torch.utils.data.DataLoader(
         TSNDataSet("", args.val_list, num_segments=args.num_segments,
                    new_length=data_length,
@@ -104,7 +107,7 @@ def main():
                    ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
-   
+    writer.add_scalar('valid_datasize', len(val_loader)) 
     
     # define loss function (criterion) and optimizer
     if args.loss_type == 'nll':
@@ -115,21 +118,26 @@ def main():
     for group in policies:
         print(('group: {} has {} params, lr_mult: {}, decay_mult: {}'.format(
             group['name'], len(group['params']), group['lr_mult'], group['decay_mult'])))
-   
-    optimizer = torch.optim.SGD(policies,
-                                args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
-   
+    if(args.arch != 'InceptionI3d'):
+        optimizer = torch.optim.SGD(policies,
+                                    args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max')
     if args.evaluate:
         validate(val_loader, model, criterion, 0)
         return
     
     for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch, args.lr_steps)
-   
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
+        train_top1 = train(train_loader, model, criterion, optimizer, epoch)
+        writer.add_scalar('train_top1_epoch', train_top1, epoch)
+        if(args.arch != 'InceptionI3d'):
+            adjust_learning_rate(optimizer, epoch, args.lr_steps)
+        else:
+            scheduler.step(train_top1)
    
         # evaluate on validation set
         if (epoch + 1) % args.eval_freq == 0 or epoch == args.epochs - 1:
@@ -215,7 +223,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         writer.add_scalar('trainloss',losses.val,iteration)
         writer.add_scalar('train_top1',top1.val,iteration)
         writer.add_scalar('train_top5',top5.val,iteration)
-
+    return top1.avg
 def validate(val_loader, model, criterion, iter, logger=None):
     batch_time = AverageMeter()
     losses = AverageMeter()
