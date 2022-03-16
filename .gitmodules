@@ -2,3 +2,6 @@
 	path = tf_model_zoo
 	url = https://github.com/RonakDedhiya/tensorflow-model-zoo.torch.git
         branch = tsn-pytorch
+[submodule "U-2-Net"]
+        path = U-2-Net
+        url = https://github.com/youhs4554/U-2-Net.git
